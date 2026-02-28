@@ -1,12 +1,18 @@
-# test_csrf.ps1
+# test_csrf_simple.ps1
 $baseUrl = "https://localhost:8443"
-$authUrl = "http://localhost:8081"  # Auth HTTP порт
+$authUrl = "http://localhost:8081"
 
-Write-Host "=== Testing CSRF Protection Demo ===" -ForegroundColor Green
+Write-Host "=== Testing CSRF Protection Demo (Simple Mode) ===" -ForegroundColor Green
 Write-Host ""
 
-# 1. Логин и сохранение cookies
-Write-Host "1. Logging in to get cookies..." -ForegroundColor Yellow
+# Фиксированный CSRF токен (как в коде Auth service)
+$csrfToken = "demo-csrf-456"
+
+Write-Host "Using fixed CSRF token: $csrfToken" -ForegroundColor Cyan
+Write-Host ""
+
+# 1. Логин (просто показываем, что cookies устанавливаются)
+Write-Host "1. Logging in..." -ForegroundColor Yellow
 $loginBody = @{
     username = "student"
     password = "student"
@@ -17,29 +23,9 @@ $response = curl.exe -k -s -i -X POST "$authUrl/v1/auth/login" `
     -d $loginBody `
     -c cookies.txt
 
-Write-Host "Login response headers (cookies set):" -ForegroundColor Cyan
+Write-Host "Login response headers:" -ForegroundColor Cyan
 $response | Select-String "Set-Cookie"
 Write-Host ""
-
-# Извлекаем CSRF токен из cookies.txt
-# Формат файла cookies.txt: домен, флаг, путь, безопасность, expiry, имя, значение
-$csrfToken = ""
-if (Test-Path cookies.txt) {
-    $lines = Get-Content cookies.txt
-    foreach ($line in $lines) {
-        if ($line -match "csrf_token\s+(\S+)") {
-            $csrfToken = $matches[1]
-            break
-        }
-    }
-}
-Write-Host "CSRF Token from cookies: $csrfToken" -ForegroundColor Cyan
-Write-Host ""
-
-if (-not $csrfToken) {
-    Write-Host "Failed to extract CSRF token!" -ForegroundColor Red
-    exit 1
-}
 
 # 2. Попытка создать задачу без CSRF заголовка (должно быть 403)
 Write-Host "2. Creating task WITHOUT CSRF header (should be 403)..." -ForegroundColor Yellow
@@ -49,23 +35,32 @@ $taskBody = @{
     due_date = "2026-03-15"
 } | ConvertTo-Json
 
-curl.exe -k -i -X POST "$baseUrl/v1/tasks" `
+$response = curl.exe -k -s -i -X POST "$baseUrl/v1/tasks" `
     -H "Content-Type: application/json" `
     -b cookies.txt `
     -d $taskBody
+
+$statusLine = $response | Select-String -Pattern "HTTP/1.1"
+Write-Host $statusLine
 Write-Host ""
 
 # 3. Создание задачи С CSRF заголовком (должно быть 201)
 Write-Host "3. Creating task WITH CSRF header (should be 201)..." -ForegroundColor Yellow
-curl.exe -k -i -X POST "$baseUrl/v1/tasks" `
+$response = curl.exe -k -s -i -X POST "$baseUrl/v1/tasks" `
     -H "Content-Type: application/json" `
     -H "X-CSRF-Token: $csrfToken" `
     -b cookies.txt `
     -d $taskBody
+
+$statusLine = $response | Select-String -Pattern "HTTP/1.1"
+$body = $response -split "\r\n\r\n" | Select-Object -Last 1
+
+Write-Host $statusLine
+Write-Host "Response body: $body"
 Write-Host ""
 
 # 4. Демонстрация XSS-защиты
-Write-Host "4. Testing XSS protection (script injection)..." -ForegroundColor Yellow
+Write-Host "4. Testing XSS protection..." -ForegroundColor Yellow
 $xssBody = @{
     title = "XSS Test"
     description = "<script>alert('XSS')</script>"
@@ -78,21 +73,17 @@ $xssResponse = curl.exe -k -s -X POST "$baseUrl/v1/tasks" `
     -b cookies.txt `
     -d $xssBody
 
-# Пытаемся распарсить JSON ответ, чтобы показать санитизированное описание
-try {
-    $responseObj = $xssResponse | ConvertFrom-Json
-    Write-Host "Response description (sanitized): $($responseObj.description)" -ForegroundColor Cyan
-} catch {
-    Write-Host "Response (raw): $xssResponse" -ForegroundColor Cyan
-}
-Write-Host ""
+$xssResponse | ConvertFrom-Json | Format-List
 
 # 5. Проверка заголовков безопасности
 Write-Host "5. Checking security headers..." -ForegroundColor Yellow
-$headers = curl.exe -k -s -I "$baseUrl/v1/tasks" -b cookies.txt
+$headers = curl.exe -k -s -I -X GET "$baseUrl/v1/tasks" -b cookies.txt
+
+Write-Host "Security headers present:" -ForegroundColor Cyan
 $headers | Select-String "X-Content-Type-Options"
 $headers | Select-String "X-Frame-Options"
 $headers | Select-String "Content-Security-Policy"
+$headers | Select-String "Referrer-Policy"
 $headers | Select-String "Strict-Transport-Security"
 
 Write-Host ""
