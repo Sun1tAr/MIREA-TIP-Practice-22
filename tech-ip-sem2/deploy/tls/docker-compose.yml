@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: tasks-db
+    environment:
+      POSTGRES_USER: tasks_user
+      POSTGRES_PASSWORD: tasks_pass
+      POSTGRES_DB: tasks_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../migrations:/docker-entrypoint-initdb.d # Автоматически накатит SQL при старте
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tasks_user -d tasks_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - tasks-network
+
+
+
+  nginx:
+    image: nginx:alpine
+    container_name: tasks-nginx
+    ports:
+      - "8443:8443" # HTTPS наружу
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./cert.pem:/etc/nginx/tls/cert.pem:ro
+      - ./key.pem:/etc/nginx/tls/key.pem:ro
+    networks:
+      - tasks-network
+
+networks:
+  tasks-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

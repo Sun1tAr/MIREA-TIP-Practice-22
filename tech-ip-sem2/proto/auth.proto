@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package auth;
+
+option go_package = "github.com/sun1tar/MIREA-TIP-Practice-22/tech-ip-sem2/proto/auth";
+
+service AuthService {
+  rpc Verify(VerifyRequest) returns (VerifyResponse);
+}
+
+message VerifyRequest {
+  string token = 1;
+}
+
+message VerifyResponse {
+  bool valid = 1;
+  string subject = 2;
+}
